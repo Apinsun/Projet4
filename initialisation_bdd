@@ -1,0 +1,201 @@
+CREATE TABLE evaluations (
+    satisfaction_employee_environnement INTEGER,
+    note_evaluation_precedente INTEGER,
+    niveau_hierarchique_poste INTEGER,
+    satisfaction_employee_nature_travail INTEGER,
+    satisfaction_employee_equipe INTEGER,
+    satisfaction_employee_equilibre_pro_perso INTEGER,
+    eval_number VARCHAR(50) PRIMARY KEY,  -- "E_1" est du texte, c'est aussi un identifiant unique
+    note_evaluation_actuelle INTEGER,
+    heure_supplementaires VARCHAR(10),    -- On met VARCHAR car "Oui" n'est pas un booléen natif
+    augementation_salaire_precedente VARCHAR(20) -- On met VARCHAR à cause du signe "%"
+);
+
+--- Une fois la table créer on fait l'import directement à l'aide de pgAdmin ---
+
+-- mettre les csv dans /tmp pour que postgre ai les droits d'accés
+--COPY evaluations FROM '/home/arnaud/Code/Projet4/extrait_eval.csv'
+--WITH (FORMAT csv, HEADER true, DELIMITER ',');
+
+-- D'abord, on retire le " %" et on convertit en nombre entier
+-- Cette commande met à jour la colonne en gardant juste la partie numérique
+UPDATE evaluations
+SET augementation_salaire_precedente = REPLACE(augementation_salaire_precedente, ' %', '');
+
+-- (Optionnel) Si tu veux vraiment changer le TYPE de la colonne définitivement en entier par la suite :
+ALTER TABLE evaluations
+ALTER COLUMN augementation_salaire_precedente TYPE INTEGER
+USING augementation_salaire_precedente::INTEGER;
+
+-- 1. On retire le "E_"
+UPDATE evaluations
+SET eval_number = REPLACE(eval_number, 'E_', '');
+
+-- 2. On convertit la colonne en nombre entier
+ALTER TABLE evaluations
+ALTER COLUMN eval_number TYPE INTEGER
+USING eval_number::INTEGER;
+
+-- Transformation de "Oui" en TRUE et tout le reste en FALSE
+ALTER TABLE evaluations
+ALTER COLUMN heure_supplementaires TYPE BOOLEAN
+USING CASE WHEN heure_supplementaires = 'Oui' THEN TRUE ELSE FALSE END;
+
+----------- DEUXIÈME TABLE ------------
+
+CREATE TABLE employes (
+    id_employee INTEGER PRIMARY KEY,
+    age INTEGER,
+    genre VARCHAR(10),                -- "F" ou "M", VARCHAR est sûr
+    revenu_mensuel INTEGER,
+    statut_marital VARCHAR(30),       -- "Célibataire", etc.
+    departement VARCHAR(50),
+    poste VARCHAR(50),
+    nombre_experiences_precedentes INTEGER,
+    nombre_heures_travailless INTEGER, 
+    annee_experience_totale INTEGER,
+    annees_dans_l_entreprise INTEGER,
+    annees_dans_le_poste_actuel INTEGER
+);
+
+----------- TROISIÈME TABLE -----------
+
+CREATE TABLE infos_generales (
+    a_quitte_l_entreprise VARCHAR(10),        -- Pour gérer le "Oui"
+    nombre_participation_pee INTEGER,
+    nb_formations_suivies INTEGER,
+    nombre_employee_sous_responsabilite INTEGER,
+    code_sondage INTEGER,                 
+    distance_domicile_travail INTEGER,
+    niveau_education INTEGER,
+    domaine_etude VARCHAR(50),
+    ayant_enfants VARCHAR(5),                 -- Pour gérer le "Y"
+    frequence_deplacement VARCHAR(30),
+    annees_depuis_la_derniere_promotion INTEGER,
+    annes_sous_responsable_actuel INTEGER
+);
+
+-- 1. Pour 'a_quitte_l_entreprise' (Oui -> TRUE)
+ALTER TABLE infos_generales
+ALTER COLUMN a_quitte_l_entreprise TYPE BOOLEAN
+USING CASE WHEN a_quitte_l_entreprise = 'Oui' THEN TRUE ELSE FALSE END;
+
+-- 2. Pour 'ayant_enfants' (Y -> TRUE)
+ALTER TABLE infos_generales
+ALTER COLUMN ayant_enfants TYPE BOOLEAN
+USING CASE WHEN ayant_enfants = 'Y' THEN TRUE ELSE FALSE END;
+
+--- CREATION DE LA VUE GLOBALE ---
+
+CREATE OR REPLACE VIEW vue_globale_rh AS
+SELECT
+    em.*,           -- Toutes les colonnes employés
+    ev.*,           -- Toutes les colonnes évals
+    ig.*,           -- Toutes les infos générales
+
+    -- Tu ajoutes ta nouvelle ligne de calcul ici :
+    ROUND(
+    (em.annees_dans_l_entreprise::NUMERIC / GREATEST(em.annee_experience_totale, 1)),2) AS ratio_fidelite
+
+FROM employes em
+JOIN evaluations ev ON em.id_employee = ev.eval_number
+JOIN infos_generales ig ON em.id_employee = ig.code_sondage;
+
+--- petit test ---
+
+SELECT * FROM vue_globale_rh LIMIT 10;
+
+
+--- CREATION D'UNE VUE AVEC DES CALCULS EN FONCTIONS DE NOTRE TARGET ---
+
+SELECT
+    -- 1. La colonne de regroupement (Ta "Target")
+    a_quitte_l_entreprise AS est_parti,
+
+    -- 2. Combien sont-ils dans chaque groupe ?
+    COUNT(*) AS nombre_employes,
+
+    -- 3. Statistiques sur l'AGE
+    ROUND(AVG(age), 1) AS age_moyen,
+    ROUND(STDDEV(age), 1) AS ecart_type_age,
+
+    -- 4. Statistiques sur le REVENU
+    ROUND(AVG(revenu_mensuel), 0) AS revenu_moyen,
+
+    -- 5. Statistiques sur la DISTANCE MAISON-TRAVAIL
+    ROUND(AVG(distance_domicile_travail), 1) AS distance_moyenne,
+
+    -- 6. Statistiques sur l'ANCIENNETÉ
+    ROUND(AVG(annees_dans_l_entreprise), 1) AS anciennete_moyenne,
+
+    -- 7. Statistiques sur la SATISFACTION (Environnement)
+    ROUND(AVG(satisfaction_employee_environnement), 2) AS satisfaction_env_moyenne
+
+FROM vue_globale_rh  -- On utilise la vue complète
+GROUP BY a_quitte_l_entreprise;
+
+
+------------------
+
+SELECT 
+    poste,
+    a_quitte_l_entreprise,
+    COUNT(*) as effectif,
+    ROUND(AVG(revenu_mensuel), 0) as salaire_moyen,
+    ROUND(AVG(age), 1) as age_moyen
+FROM vue_globale_rh
+GROUP BY poste, a_quitte_l_entreprise
+ORDER BY poste, a_quitte_l_entreprise;
+
+-------------------
+
+SELECT
+    -- 1. Création des groupes hiérarchiques
+    CASE
+        WHEN poste IN ('Représentant Commercial', 'Assistant de Direction', 'Consultant') THEN '1_Junior_Execution'
+        WHEN poste IN ('Cadre Commercial', 'Tech Lead', 'Ressources Humaines') THEN '2_Intermediaire'
+        WHEN poste IN ('Manager', 'Senior Manager', 'Directeur Technique') THEN '3_Management_Direction'
+        ELSE '4_Autre' -- Sécurité au cas où un nouveau poste apparaît
+    END AS niveau_hierarchique,
+
+    -- 2. La cible (Target)
+    a_quitte_l_entreprise,
+
+    -- 3. Les indicateurs
+    COUNT(*) AS effectif,
+    ROUND(AVG(revenu_mensuel), 0) AS salaire_moyen,
+    ROUND(AVG(age), 1) AS age_moyen,
+    
+    -- Optionnel : Ratio de départ pour voir si un groupe est plus "volatile"
+    -- (Petite astuce de calcul de pourcentage en SQL)
+    ROUND(
+        COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY 
+            CASE
+                WHEN poste IN ('Représentant Commercial', 'Assistant de Direction', 'Consultant') THEN '1_Junior_Execution'
+                WHEN poste IN ('Cadre Commercial', 'Tech Lead', 'Ressources Humaines') THEN '2_Intermediaire'
+                WHEN poste IN ('Manager', 'Senior Manager', 'Directeur Technique') THEN '3_Management_Direction'
+                ELSE '4_Autre'
+            END
+        ), 1
+    ) as pourcentage_du_groupe
+
+FROM vue_globale_rh
+GROUP BY niveau_hierarchique, a_quitte_l_entreprise
+ORDER BY niveau_hierarchique, a_quitte_l_entreprise;
+
+
+--------------------------------------------------------------
+
+SELECT
+    poste,
+    COUNT(*) as effectif_total,
+    SUM(CASE WHEN a_quitte_l_entreprise = TRUE THEN 1 ELSE 0 END) as nombre_departs,
+    -- Calcul du pourcentage de turnover
+    ROUND(
+        (SUM(CASE WHEN a_quitte_l_entreprise = TRUE THEN 1 ELSE 0 END)::NUMERIC / COUNT(*)) * 100,
+        1
+    ) as pourcentage_turnover
+FROM vue_globale_rh
+WHERE poste IN ('Représentant Commercial', 'Assistant de Direction', 'Consultant', 'Ressources Humaines')
+GROUP BY poste
+ORDER BY pourcentage_turnover DESC;
