@@ -54,6 +54,26 @@ files = [
 ]
 
 [[package]]
+name = "category-encoders"
+version = "2.9.0"
+description = "A package for encoding categorical variables for machine learning"
+optional = false
+python-versions = ">=3.11"
+groups = ["main"]
+files = [
+    {file = "category_encoders-2.9.0-py3-none-any.whl", hash = "sha256:49c0e49cd3bd93b21c0bcc928ecbe9b3d09951a6f7fff8cc67f1f33967887227"},
+    {file = "category_encoders-2.9.0.tar.gz", hash = "sha256:659311786e909013b8e8715fd1271244789a1dea278da44058828f88eeab5b40"},
+]
+
+[package.dependencies]
+numpy = ">=1.14.0"
+pandas = ">=1.0.5"
+patsy = ">=0.5.1"
+scikit-learn = ">=1.6.0"
+scipy = ">=1.0.0"
+statsmodels = ">=0.9.0"
+
+[[package]]
 name = "certifi"
 version = "2025.11.12"
 description = "Python package for providing Mozilla's CA Bundle."
@@ -2987,4 +3007,4 @@ unicode = ["tangled-up-in-unicode (==0.2.0)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.14"
-content-hash = "45c9db4d1cc9ded0a77e9c692c6889d121e60399878c9bf190da17ab4fb7f571"
+content-hash = "3073dd06151a7e06e2005b4f1d8d5810bee85720f6bc9cb1de6d1a33d191f252"
